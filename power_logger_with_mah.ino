@@ -1,5 +1,6 @@
 #include <Adafruit_INA219.h>
 #include <SSD1306AsciiAvrI2c.h>
+#include <LowPower.h>
 #include <SdFat.h>
 #include <Encoder.h>
 
@@ -7,6 +8,7 @@
 //declare SSD1306 OLED display variables
 #define OLED_RESET 4
 SSD1306AsciiAvrI2c display;
+
 
 //declare INA219 variables
 Adafruit_INA219 ina219;
@@ -17,11 +19,11 @@ float energy_mWh = 0.0, oldegy = 0.0;
 float capacity_mAh = 0.0, oldcap = 0.0;
 unsigned long elapsed = 0;
 bool normal_mode = false;
-String battery_mode="";
+String battery_mode = "";
 bool store_to_sd = true;
-float battery_min=2.71;
-float battery_max=4.19;
-bool stop=false;
+float battery_min = 2.71;
+float battery_max = 4.20;
+bool stop = false;
 
 
 //declare microSD variables
@@ -50,24 +52,41 @@ unsigned long lastEventTime1Hz = 0;
 unsigned long lastEventTime10Hz = 0;
 Encoder myEncoder(CLK, DT);
 
+void wakeUp() {
+  // Just a handler for the pin interrupt.
+}
 
 void setup() {
-  bool start=false;
- // Serial.begin(9600);
+  bool start = false;
+  // Serial.begin(9600);
   //setup pins
   pinMode(CLK, INPUT);
   pinMode(DT, INPUT);
   pinMode(SW, INPUT_PULLUP);
-
   //setup the INA219
   ina219.begin();
+
+  //get battery voltage
+  //averaging the analog readings
+  float level;
+  for (int i = 0; i < 100; i++) {
+    level += analogRead(A0);
+  }
+  level = level / 100;
+  // multiplying the value with voltage resolution of the Arduino board
+  float real_voltage = level * 0.004882814;
 
   //setup the display
   display.begin(&Adafruit128x64, 0x3C, OLED_RESET);
   display.setFont(System5x7);
+  display.set1X();
   display.setCursor(10, 1);
   display.println("Welcome Sir!!");
-  delay(1000);
+  display.setCursor(1, 3);
+  display.println("battery voltage is:");
+  display.setCursor(30, 5);
+  display.println(real_voltage);
+  delay(2000);
   display.clear();
 
   // disable adc
@@ -75,16 +94,28 @@ void setup() {
   ACSR = 0x80;
 
   //select the mode now
-  int size = 3;
-  char* mod_options[size] = { "Normal", "Discharge battery", "Charge battery"};
+  int size = 4;
+  char* mod_options[size] = { "Normal", "Discharge lipo", "Charge lipo", "Charge Module"};
   //select a mode
   int choice = handleEncoderInput("Choose a Mode:", mod_options, size);
-  if(choice==0) {
+  if (choice == 3) {
+    //sleep the arduino
+    display.clear();
+    display.println("Logger is charging");
+    // Allow wake up pin to trigger interrupt on low.
+    attachInterrupt(0, wakeUp, LOW);
+
+    // Enter power down state with ADC and BOD module disabled.
+    // Wake up when wake up pin is low.
+    LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
+    detachInterrupt(0);
+
+  } else if (choice == 0) {
     normal_mode = true;
   } else {
     battery_mode = mod_options[choice];
   }
- // Serial.print("mode:");
+  // Serial.print("mode:");
   // Serial.println(battery_mode);
   delay(300);
   size = 2;
@@ -95,8 +126,8 @@ void setup() {
     store_to_sd = true;
   }
 
- // Serial.print("record:");
- // Serial.println(store_to_sd);
+  // Serial.print("record:");
+  // Serial.println(store_to_sd);
 
   if (store_to_sd) {
     //setup the SDcard reader
@@ -110,23 +141,23 @@ void setup() {
   size = 3;
   char* callib_options[size] = { "32V 2A", "32V 1A", "16V 400mA" };
   choice = handleEncoderInput("Callibration:", callib_options, size);
-  if(choice==0) {
+  if (choice == 0) {
     ina219.setCalibration_32V_2A();
-  }else if (choice==1) {
+  } else if (choice == 1) {
     ina219.setCalibration_32V_1A();
-  }else if (choice==2) {
+  } else if (choice == 2) {
     ina219.setCalibration_16V_400mA();
   }
 
   //wait until user starts the activity
   display.println("Press to Start:");
   delay(300);
-  while(!start){
+  while (!start) {
     int btnState = digitalRead(SW);
     if (btnState == LOW) {
       if (millis() - lastButtonPress > 100) {
-       // Serial.println("Button pressed!");
-        start=true;
+        // Serial.println("Button pressed!");
+        start = true;
         display.clear();
       }
       lastButtonPress = millis();
@@ -189,11 +220,11 @@ void loop() {
     lastEventTime10Hz = millis();
   }
   //check if we are in battery mode in order to stop the process
-  if(battery_mode=="Discharge battery" && loadvoltage<battery_min){
-    stop=true;
+  if (battery_mode == "Discharge lipo" && loadvoltage < battery_min) {
+    stop = true;
   }
-  if(battery_mode=="Charge battery" && loadvoltage>battery_max){
-    stop=true;
+  if (battery_mode == "Charge lipo" && loadvoltage > battery_max) {
+    stop = true;
   }
 }
 void ina219values() {
@@ -292,7 +323,7 @@ int handleEncoderInput(const char* title, const char* options[], int numOptions)
     int btnState = digitalRead(SW);
     if (btnState == LOW) {
       if (millis() - lastButtonPress > 50) {
-       // Serial.println("Button pressed!");
+        // Serial.println("Button pressed!");
         select_needed = false;
         display.clear();
       }
